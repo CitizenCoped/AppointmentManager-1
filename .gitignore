@@ -40,9 +40,7 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
-*.json
 
 # local deploy helpers
 .vercel-deploy-args.json
 artifacts-deploy.json
-/tmp/
