@@ -1,9 +1,0 @@
-{
-  "calendar_connection": false,
-  "workflows": {
-    "John Schedule-Complete": false,
-    "Peter Schedule-Reschedule-Complete": false,
-    "Paul Schedule-Reschedule-Cancel": false,
-    "Mary Schedule-Cancel": false
-  }
-}

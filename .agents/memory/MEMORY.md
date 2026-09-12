@@ -1,1 +1,0 @@
-- [drizzle-kit unavailable / db:push blocked](drizzle-kit-firewall.md) — db:push fails (firewall blocks shell-quote dep); post-merge skips it; schema not auto-applied. Also: Neon endpoint can be disabled.
