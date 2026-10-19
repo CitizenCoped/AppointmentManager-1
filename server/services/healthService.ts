@@ -8,6 +8,8 @@ export type HealthStatus = {
   calendar: boolean;
   email: boolean;
   anthropic: boolean;
+  /** Hostname of DATABASE_URL (no credentials); lets a cutover be verified externally. */
+  dbHost?: string;
   commit?: string;
 };
 
@@ -50,6 +52,14 @@ async function checkDb(): Promise<"ok" | "fail"> {
   }
 }
 
+function dbHost(): string | undefined {
+  try {
+    return process.env.DATABASE_URL ? new URL(process.env.DATABASE_URL).hostname : undefined;
+  } catch {
+    return "unparseable";
+  }
+}
+
 /** Safe for an unauthenticated route: no secret values, no third-party calls. */
 export async function getHealthStatus(): Promise<HealthStatus> {
   const dbStatus = await checkDb();
@@ -58,6 +68,7 @@ export async function getHealthStatus(): Promise<HealthStatus> {
     status: dbStatus === "ok" ? "ok" : "degraded",
     db: dbStatus,
     ...flags,
+    dbHost: dbHost(),
     commit: process.env.VERCEL_GIT_COMMIT_SHA?.slice(0, 7),
   };
 }

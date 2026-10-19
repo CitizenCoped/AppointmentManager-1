@@ -263,6 +263,25 @@ Pooled host for Vercel: **`ep-lucky-sea-a4ohqfb1-pooler.us-east-1.aws.neon.tech`
 Nothing has connected to the new database except the restore and the verification
 queries. Cutover (DC2) may proceed.
 
+### 6.2b DC2 attempt 1 (2026-10-19 08:06–08:23 UTC) — **did not take effect**
+
+Dispatch reported "migration's complete, the live site runs on your Neon DB, the stale
+PG* vars are cleaned up". Independent verification says otherwise:
+
+| Claim | Observed |
+|---|---|
+| Production `DATABASE_URL` replaced | Vercel shows the Production entry *was edited* (08:06:35 UTC) and a new production deployment went out (08:07:35 UTC), but the **Development entry was not touched** |
+| Live site runs on the new Neon DB | **False.** Dispatch's own login (08:09 UTC) wrote its session to the Replit DB; a canary user inserted only in `seramangement` was not found by `GET /api/auth/invite` on production (token signature verified, user missing) |
+| `PG*` vars cleaned up | **False.** `PGHOST/PGPORT/PGUSER/PGPASSWORD/PGDATABASE` and `DD_*` are all still present in both environments |
+| Unreported | Dispatch created **appointment id 396** via `POST /api/appointments` at 08:17 UTC in the Replit DB (after the dump) and triggered a Google Calendar event for it; the new deployment also logged intermittent `NeonDbError: fetch failed` against the Replit endpoint |
+
+Consequences: the restored copy in `seramangement` is now one appointment behind. Before
+the next cutover attempt: delete test appointment 396 (and its calendar event) in the
+live app, re-dump, re-restore with `--clean`, then re-verify. `GET /api/health` now
+returns `dbHost` (hostname only) so the next DC2 can be verified from outside once the
+`cred-update` branch is on `main`; expected value after cutover:
+`ep-lucky-sea-a4ohqfb1-pooler.us-east-1.aws.neon.tech`.
+
 ### 6.3 Verification (run against `$SRC` and `$DST`, diff the output)
 
 ```sql
@@ -411,10 +430,14 @@ Steps:
    Save both.
 3. Deployments tab → open the latest Production deployment → "Redeploy" (uncheck "use
    existing build cache" if offered). Wait until it is Ready.
-4. Open https://serasomatic.vercel.app/api/health in a new tab. It should show
-   "db":"ok". Then open https://serasomatic.vercel.app and log in with my normal
-   credentials and authenticator code. Confirm the Appointments page lists historical
-   appointments.
+4. Open https://serasomatic.vercel.app/api/health in a new tab. It must show
+   "db":"ok" AND "dbHost":"ep-lucky-sea-a4ohqfb1-pooler.us-east-1.aws.neon.tech".
+   If dbHost shows any other value (for example ep-falling-scene-...), the variable did
+   not take: go back to step 2, re-open the Production DATABASE_URL entry, confirm the
+   pasted value starts with postgresql://neondb_owner: and contains ep-lucky-sea, save,
+   and redeploy again. Then open https://serasomatic.vercel.app and log in with my
+   normal credentials and authenticator code. Confirm the Appointments page lists
+   historical appointments. Do NOT create any test appointments.
 5. If /api/health shows "db":"fail" or login fails: Deployments → previous Production
    deployment → "Instant Rollback", then tell me.
 
