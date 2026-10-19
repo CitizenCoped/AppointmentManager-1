@@ -8,6 +8,7 @@
     "build": "vite build && esbuild server/index.ts --platform=node --packages=external --bundle --format=esm --outdir=dist",
     "start": "NODE_ENV=production node server.js",
     "check": "tsc -p tsconfig.server.json",
+    "check:creds": "tsx --env-file=.env server/scripts/checkCreds.ts",
     "db:push": "drizzle-kit push",
     "db:backfill-financials": "tsx --env-file=.env server/scripts/backfillAppointmentFinancials.ts",
     "db:import-replit-export": "tsx --env-file=.env server/scripts/importReplitExport.ts",

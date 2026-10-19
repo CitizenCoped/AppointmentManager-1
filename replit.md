@@ -101,11 +101,16 @@ This is a comprehensive appointment scheduling and management platform designed 
 - **Testing**: Built-in service testing endpoints for integration validation
 
 ### Environment Variables Required
-- `DATABASE_URL`: Neon PostgreSQL connection string
-- `SESSION_SECRET`: Session encryption key
-- `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REFRESH_TOKEN`: Google Calendar API credentials
-- `GOOGLE_CALENDAR_ID`, `GOOGLE_ARCHIVE_CALENDAR_ID`: Calendar identifiers
-- Email service credentials (Gmail or SendGrid)
+See `.env.example` for the complete, annotated list and `docs/cred-update/spec.md` for
+status and recovery steps. Verify a local setup with `npm run check:creds`; production
+exposes `GET /api/health` (presence flags only, no values).
+
+Hard requirements: `DATABASE_URL`, `SESSION_SECRET`. Everything else degrades gracefully
+(calendar sync, email, AI extraction switch off when their variables are absent).
+
+Warning: `SESSION_SECRET` also encrypts stored TOTP secrets (`TOTP_ENCRYPTION_KEY` is an
+optional override). Rotating either without re-encrypting `users.totp_secret` breaks every
+authenticator enrolment.
 
 ## Deployment Strategy
 

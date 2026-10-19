@@ -4,6 +4,7 @@ type PublicRoute = { method: string; pattern: RegExp };
 
 /** Routes that may be called without a session. */
 const PUBLIC_API_ROUTES: PublicRoute[] = [
+  { method: "GET", pattern: /^\/api\/health\/?$/ },
   { method: "POST", pattern: /^\/api\/auth\/login\/?$/ },
   { method: "POST", pattern: /^\/api\/auth\/logout\/?$/ },
   { method: "GET", pattern: /^\/api\/auth\/me\/?$/ },
