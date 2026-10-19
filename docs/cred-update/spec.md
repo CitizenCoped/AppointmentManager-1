@@ -54,7 +54,7 @@ Decisions already taken:
 
 | Area | Status | Evidence |
 |---|---|---|
-| Database (`DATABASE_URL`) | 🟡 **UP but Replit-owned** (was DOWN on 10-18) | Endpoint `ep-falling-scene-a4h6hlx0` answers again on 10-19; prod login → 401 for bogus creds. Not in our Neon org, can be disabled again at any time |
+| Database (`DATABASE_URL`) | 🟡 **UP but Replit-owned**; **copy restored into `seramangement` and verified (§6.2a)**, awaiting DC2 cutover | Endpoint `ep-falling-scene-a4h6hlx0` answers again on 10-19; prod login → 401 for bogus creds |
 | Sessions / MFA (`SESSION_SECRET`) | 🟡 Set in Vercel, unverifiable until DB is back | `server/middleware/session.ts`, `server/services/totpService.ts:15` |
 | Google Calendar (5 vars) | 🟢 **WORKING** | Refresh token mints access tokens; `calendars.get` resolves both calendars: "Scheduled-Rescheduled" (active) and "Complete-Cancel" (archive) |
 | Gmail SMTP (`GMAIL_EMAIL`, `GMAIL_APP_PASSWORD`) | 🔴 **BROKEN** | `nodemailer.verify()` → `535-5.7.8 Username and Password not accepted` (app password revoked or 2-Step changed) |
@@ -243,6 +243,26 @@ the proposed statements.
 
 If the new DB was touched by mistake: `psql "$DST" -c 'drop schema public cascade; create schema public;'` and restore again.
 
+### 6.2a Result (2026-10-19 00:36 PT)
+
+Executed from this Mac with the owner's permission. Source pg 16.15, destination pg 17.11.
+Dump: `~/backups/serasomatic/replit_2026-10-19_0036.dump` (+ `.schema.sql`, source and
+destination count/sequence files alongside). `pg_restore --clean --if-exists
+--exit-on-error` returned 0 into the empty `production` branch of `seramangement`.
+
+| Check | Result |
+|---|---|
+| Row counts, 13 tables | identical (appointments 121, clients 81, providers 11, users 2, audit_logs 14, session 4, backups 121+121) |
+| Sequences | identical (appointments 395, clients 119, users 37, providers 11, audit_logs 16) |
+| Users | ids 36 and 37, both `totp_enabled`, bcrypt hashes intact |
+| TOTP continuity | both stored secrets decrypt with the current `SESSION_SECRET` |
+| Orphan `appointments.client_id` | 0 |
+
+Destination endpoint: `ep-lucky-sea-a4ohqfb1` (branch `br-delicate-band-a4fh1coi`).
+Pooled host for Vercel: **`ep-lucky-sea-a4ohqfb1-pooler.us-east-1.aws.neon.tech`**.
+Nothing has connected to the new database except the restore and the verification
+queries. Cutover (DC2) may proceed.
+
 ### 6.3 Verification (run against `$SRC` and `$DST`, diff the output)
 
 ```sql
@@ -398,7 +418,8 @@ Steps:
 5. If /api/health shows "db":"fail" or login fails: Deployments → previous Production
    deployment → "Instant Rollback", then tell me.
 
-Report back: the pooled host name only (e.g. ep-xxxx-pooler.us-east-1.aws.neon.tech);
+Report back: the pooled host name only (it should be
+ep-lucky-sea-a4ohqfb1-pooler.us-east-1.aws.neon.tech; if it differs, stop and tell me);
 confirmation both DATABASE_URL entries were replaced; the new deployment's status and
 URL; the /api/health JSON; whether login and the appointments list worked; whether you
 had to roll back.
