@@ -282,6 +282,19 @@ returns `dbHost` (hostname only) so the next DC2 can be verified from outside on
 `cred-update` branch is on `main`; expected value after cutover:
 `ep-lucky-sea-a4ohqfb1-pooler.us-east-1.aws.neon.tech`.
 
+### 6.2c State after PR #7 (2026-10-19 09:50 UTC)
+
+- `cred-update` squash-merged into `main` (`9d2aa34`); production redeployed.
+- `GET https://serasomatic.vercel.app/api/health` on production now returns
+  `{"status":"ok","db":"ok","calendar":true,"email":false,"anthropic":false,
+  "dbHost":"ep-falling-scene-a4h6hlx0.us-east-1.aws.neon.tech","commit":"9d2aa34"}`,
+  i.e. production is provably still on the Replit endpoint.
+- Re-dumped (`replit_2026-10-19_0250.dump`) and re-restored with `--clean` into
+  `seramangement`; counts and sequences identical again, appointment 396 included
+  (appointments 122, clients 81, users 2).
+- Ready for the DC2 retry. Success criterion: `/api/health` shows
+  `"dbHost":"ep-lucky-sea-a4ohqfb1-pooler.us-east-1.aws.neon.tech"`.
+
 ### 6.3 Verification (run against `$SRC` and `$DST`, diff the output)
 
 ```sql
