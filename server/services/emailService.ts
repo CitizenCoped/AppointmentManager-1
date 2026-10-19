@@ -6,7 +6,7 @@ import { getAppointmentTotalClientCollections } from '../../shared/appointmentFi
 import { generateDepositConfirmToken } from '../middleware/depositToken';
 
 // Create reusable transporter object using SMTP transport
-const createTransporter = () => {
+export const createTransporter = () => {
   // We need to get credentials from environment variables
   // These will be set using the ask_secrets tool when needed
   const email = process.env.GMAIL_EMAIL;

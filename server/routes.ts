@@ -26,6 +26,7 @@ import {
   mfaEnableHandler,
 } from "./middleware/auth";
 import { requireAuth, requireMfa } from "./middleware/requireAuth";
+import { getHealthStatus } from "./services/healthService";
 import {
   generateDepositConfirmToken,
   validateDepositConfirmToken,
@@ -36,6 +37,22 @@ import { getUploadRoot } from "./uploadPath";
 import rateLimit from "express-rate-limit";
 
 export async function registerRoutes(app: Express): Promise<Server> {
+  // Public health probe. Registered before the session middleware so a stale
+  // cookie cannot route the request through the Postgres session store while
+  // the database is down. Reports presence flags only, never values.
+  app.get("/api/health", async (_req: Request, res: Response) => {
+    try {
+      const health = await getHealthStatus();
+      res
+        .set("Cache-Control", "no-store")
+        .status(health.db === "ok" ? 200 : 503)
+        .json(health);
+    } catch (error) {
+      log(`Health check error: ${error}`, "health");
+      res.status(500).json({ status: "degraded", message: "Health check failed" });
+    }
+  });
+
   // Setup session middleware
   setupSession(app);
 
