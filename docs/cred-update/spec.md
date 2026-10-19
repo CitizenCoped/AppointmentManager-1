@@ -5,6 +5,21 @@
 
 ---
 
+> **Update 2026-10-19.** The Replit-hosted Neon endpoint came back on its own: the same
+> connection string that was refused on 10-18 now answers (pg 16.15, 2 users with TOTP, 121
+> appointments, last write 2026-07-20) and production login returns 401 instead of 500.
+> The app is **up again**, but still on a database we do not own. The migration to
+> `seramangement` stays the plan; it is no longer an emergency. Consequences:
+> D1 and D2 are replaced (see §10), Claude can run the dump/restore from this Mac once
+> permitted, and only the final `DATABASE_URL` swap needs Dispatch.
+> Also found: `attached_assets/replit_credentials.txt` (gitignored, June 2026) holds a
+> **still-valid** `ANTHROPIC_API_KEY`, a Datadog key, a different Gmail sender + app
+> password, and the same DB URL / session secret / refresh token as `.env`. Treat that
+> file as a leak surface: rotate what it contains, then delete it.
+> Vercel marks every production variable **Sensitive**, so values cannot be read back
+> (`vercel env pull` returns empty strings). New variables should be Sensitive for
+> Production but plain for Development so local `.env` can still be pulled.
+
 ## 1. Why this exists
 
 The site renders, but it is functionally down. Every login returns HTTP 500 because the
@@ -39,12 +54,12 @@ Decisions already taken:
 
 | Area | Status | Evidence |
 |---|---|---|
-| Database (`DATABASE_URL`) | 🔴 **DOWN** | Neon: endpoint `ep-falling-scene-a4h6hlx0` disabled; prod `POST /api/auth/login` → 500 `Failed to log in` |
+| Database (`DATABASE_URL`) | 🟡 **UP but Replit-owned** (was DOWN on 10-18) | Endpoint `ep-falling-scene-a4h6hlx0` answers again on 10-19; prod login → 401 for bogus creds. Not in our Neon org, can be disabled again at any time |
 | Sessions / MFA (`SESSION_SECRET`) | 🟡 Set in Vercel, unverifiable until DB is back | `server/middleware/session.ts`, `server/services/totpService.ts:15` |
 | Google Calendar (5 vars) | 🟢 **WORKING** | Refresh token mints access tokens; `calendars.get` resolves both calendars: "Scheduled-Rescheduled" (active) and "Complete-Cancel" (archive) |
 | Gmail SMTP (`GMAIL_EMAIL`, `GMAIL_APP_PASSWORD`) | 🔴 **BROKEN** | `nodemailer.verify()` → `535-5.7.8 Username and Password not accepted` (app password revoked or 2-Step changed) |
 | `NOTIFICATION_EMAIL` | 🔴 **MISSING** in Vercel and local `.env` | Default recipient for new/changed-appointment emails; without it only opted-in clients get mail |
-| Anthropic (`ANTHROPIC_API_KEY`) | 🔴 **MISSING** everywhere | `server/services/conversationService.ts:4`; `POST /api/conversation/analyze` (`routes.ts:1263`) returns 500 |
+| Anthropic (`ANTHROPIC_API_KEY`) | 🔴 **MISSING** in Vercel and `.env` | A valid key exists only in the June 2026 Replit export file; `POST /api/conversation/analyze` (`routes.ts:1263`) returns 500 in production |
 | Deposit / invite / registration (`DEPOSIT_CONFIRM_SECRET`, `INVITE_SECRET`, `APP_BASE_URL`, `ALLOW_REGISTRATION`) | 🟢 Set in Vercel; fallbacks exist | `depositToken.ts:7`, `inviteService.ts:7-9`, `auth.ts:65` |
 | Datadog (`DD_API_KEY`, `DD_SERVICE`, `DD_ENV`) | ⚪ **UNUSED** | No Datadog SDK installed; nothing reads them |
 | `PGHOST` / `PGPORT` / `PGUSER` / `PGPASSWORD` / `PGDATABASE` | ⚪ **UNUSED** | `server/db.ts` only reads `DATABASE_URL` |
@@ -161,11 +176,12 @@ Present in Vercel (prod+dev) and local `.env`; read by nothing.
 | # | Step | Owner | Blocks |
 |---|---|---|---|
 | R0 | Ship `GET /api/health` + `npm run check:creds` (§9) so every later step is measurable | Claude | nothing |
-| R1 | Revive Replit DB (D1) → provision Neon target (D2) → dump/restore (§6) → cutover | Dispatch then Claude | everything else |
+| R1 | Dump the (now reachable) Replit DB from this Mac → restore into `seramangement` (§6) → Dispatch swaps Vercel `DATABASE_URL` (DC2) | Owner/Claude, then Dispatch | ownership of the data |
 | R2 | Rotate Gmail app password, set `NOTIFICATION_EMAIL` (D3) | Dispatch | email notifications |
 | R3 | Create Anthropic key, confirm model (D4) | Dispatch | Conversation Create |
 | R4 | Verify Google Cloud consent screen + OAuth client health (D5, report-only) | Dispatch | nothing today; prevents a future outage |
 | R5 | Vercel env cleanup: drop `PG*`, `DD_*`; set `ALLOW_REGISTRATION=false`; confirm `APP_BASE_URL` (D6) | Dispatch | hygiene |
+| R7 | Revoke the Datadog key and delete `attached_assets/replit_credentials.txt` after its contents are rotated (D7) | Dispatch + owner | leak surface |
 | R6 | `vercel env pull`, `npm run check:creds`, redeploy, run §7 checklist | Claude | sign-off |
 | DC1 | Contingency only: re-mint Google refresh token | Dispatch | only if `invalid_grant` appears |
 
@@ -193,7 +209,12 @@ Present in Vercel (prod+dev) and local `.env`; read by nothing.
 - Neon strings: dump/restore use the **direct** endpoint; Vercel gets the **pooled** (`-pooler`)
   string because `server/db.ts` uses the Neon HTTP driver on Vercel.
 
-### 6.2 Procedure (after D1 and D2 report back)
+### 6.2 Procedure (source is reachable again; run from this Mac)
+
+Claude's sandbox is not allowed to read production data, so the owner runs the dump
+(or grants the permission). `SRC` is the `DATABASE_URL` already in local `.env`; `DST`
+comes from Neon MCP `get_connection_string` (project `square-rice-65609182`, branch
+`production`, pooled off).
 
 ```bash
 mkdir -p ~/backups/serasomatic && cd ~/backups/serasomatic
@@ -318,124 +339,131 @@ None of this blocks the CRM recovery.
 
 ---
 
-## 10. Dispatch prompts
+## 10. Dispatch prompts (revised 2026-10-19)
 
 Each prompt is self-contained. Paste it into Dispatch as written. Every prompt ends with a
-**Report back** list; Dispatch should answer only those items and never include a secret value.
+**Report back** list; Dispatch answers only those items and never includes a secret value.
+When a prompt stores a value in Vercel: mark **Production as Sensitive**, leave
+**Development unmarked** (plain) so `vercel env pull .env --environment=development` can
+rebuild the local `.env`.
 
-### D1 — Replit: revive the database and stage its connection string
+Order: D3, D4, D5 any time (independent). D1 only if the database drops again. DC2 only
+after Claude confirms the restore into `seramangement` is verified. D6 and D7 last.
+
+### D1 — Replit: keep the database alive until cutover (report-only)
 
 ```
-Goal: re-enable the Postgres database attached to my old Replit project for the Serasomatic
-appointment app (the deployment used to live at scheduleing.replit.app; the Repl is probably
-named "AppointmentManager", "scheduleing" or similar). The database is a Replit-managed Neon
-database whose host is ep-falling-scene-a4h6hlx0.us-east-1.aws.neon.tech.
+Goal: find out why the Postgres database attached to my old Replit project for the
+Serasomatic appointment app (formerly deployed at scheduleing.replit.app; the Repl is
+probably named "AppointmentManager", "scheduleing" or similar) was disabled around
+2026-10-18, and make sure it stays enabled for the next two weeks. Change nothing else.
 
 Steps:
 1. Open https://replit.com in my signed-in browser. Find the Repl (search "Appointment",
-   "scheduleing", "Serasomatic"). If the account shows a paused/billing banner, tell me and stop.
-2. Open the Repl → left pane "Database" (or "Storage" → "PostgreSQL"). If the database shows as
-   disabled/suspended, click the enable/wake action. Wait until it reports connected. The
-   Replit AI agent may offer to "re-enable" via the API; accepting that is fine.
-3. In the Database pane open the SQL console / "Query" tab and run, one at a time:
-     select count(*) from users;
-     select count(*) from clients;
-     select count(*) from providers;
-     select count(*) from appointments;
-     select max(updated_at) from appointments;
-     select version();
-   Write down the six results.
-4. In the same pane, locate the connection string (DATABASE_URL). Do not paste it into chat.
-   Open https://vercel.com in a new tab → team "sethrocks-projects" → project "serasomatic" →
-   Settings → Environment Variables → "Add new". Key: REPLIT_DATABASE_URL. Value: paste the
-   connection string. Environment: Development only. Mark as Sensitive. Save.
-5. Do NOT change any existing Vercel variable. Do NOT delete or modify anything in Replit.
-   Do NOT run any write statements in the SQL console.
+   "scheduleing", "Serasomatic").
+2. Check the account for any billing, "Core plan expired", "storage paused" or
+   "database suspended" banners. Record what you see.
+3. Open the Repl → "Database" (or "Storage" → "PostgreSQL") pane. Record its status
+   (enabled/active/suspended) and any message about auto-suspension or inactivity.
+4. If there is a setting that keeps the database from being disabled (e.g. "Always on",
+   or a resume button), note it but DO NOT change plan/billing settings; tell me instead.
+5. Do NOT copy the connection string anywhere. Do NOT run SQL. Do NOT delete anything.
 
-Report back: whether the DB is now enabled; the six query results; the Postgres major version;
-confirmation that REPLIT_DATABASE_URL exists in Vercel (Development). If the Repl or its database
-no longer exists, say exactly what Replit shows so we switch to the backup plan.
+Report back: Repl name; any banners; database status text; whether an inactivity /
+auto-suspend policy is shown and what it says.
 ```
 
-### D2 — Neon: prepare the destination project and stage its connection strings
+### DC2 — Vercel: switch the app to the migrated Neon database (run only when I say the restore is verified)
 
 ```
-Goal: prepare my own Neon project "seramangement" (project id square-rice-65609182, region
-aws-us-east-1) to receive the Serasomatic CRM database, and stage its connection strings in
-Vercel. Do not create a new Neon project.
+Goal: point the Serasomatic Vercel project at the database I migrated into my own Neon
+project "seramangement" (project id square-rice-65609182), then redeploy.
 
 Steps:
-1. Open https://console.neon.tech in my signed-in browser → project "seramangement".
-2. Branches: the "production" branch (br-delicate-band-a4fh1coi) is archived. Open it; if the
-   console offers "Unarchive"/"Restore", do it. Confirm the branch's compute shows Idle or Active.
-3. Dashboard → "Connect"/"Connection string". Database "neondb", role "neondb_owner" (or the
-   default owner). Capture two variants, by toggling the "Pooled connection" switch:
-     a) pooled OFF  (direct host, no "-pooler")
-     b) pooled ON   (host contains "-pooler")
-   Both must end with ?sslmode=require. Do not paste them into chat.
-4. Open https://vercel.com → team "sethrocks-projects" → project "serasomatic" → Settings →
-   Environment Variables. Add:
-     Key NEON_DIRECT_URL  Value = (a)  Environment: Development only  Sensitive
-     Key DATABASE_URL_NEW Value = (b)  Environment: Production and Development  Sensitive
-   Save. Do NOT touch the existing DATABASE_URL.
-5. Back in Neon, Tables view for branch "production": confirm it has no tables (it should be
-   empty). If it has tables, list their names and stop.
+1. Open https://console.neon.tech → project "seramangement" → branch "production".
+   Click "Connect" / "Connection string". Database "neondb", the default owner role.
+   Turn the "Pooled connection" switch ON (host contains "-pooler"). Make sure it ends with
+   ?sslmode=require. Copy it. Do not paste it into chat.
+2. Open https://vercel.com → team "sethrocks-projects" → project "serasomatic" →
+   Settings → Environment Variables. Find DATABASE_URL.
+   - Edit the Production entry: replace the value with the pooled string. Keep "Sensitive".
+   - Edit the Development entry the same way (leave it not sensitive).
+   Save both.
+3. Deployments tab → open the latest Production deployment → "Redeploy" (uncheck "use
+   existing build cache" if offered). Wait until it is Ready.
+4. Open https://serasomatic.vercel.app/api/health in a new tab. It should show
+   "db":"ok". Then open https://serasomatic.vercel.app and log in with my normal
+   credentials and authenticator code. Confirm the Appointments page lists historical
+   appointments.
+5. If /api/health shows "db":"fail" or login fails: Deployments → previous Production
+   deployment → "Instant Rollback", then tell me.
 
-Report back: branch state after step 2; the direct host name (host only, e.g.
-ep-xxxx.us-east-1.aws.neon.tech) and the pooled host name; confirmation that NEON_DIRECT_URL and
-DATABASE_URL_NEW exist in Vercel; whether the production branch is empty.
+Report back: the pooled host name only (e.g. ep-xxxx-pooler.us-east-1.aws.neon.tech);
+confirmation both DATABASE_URL entries were replaced; the new deployment's status and
+URL; the /api/health JSON; whether login and the appointments list worked; whether you
+had to roll back.
 ```
 
 ### D3 — Gmail: rotate the app password and set the notification recipient
 
 ```
-Goal: the Serasomatic CRM sends appointment emails through Gmail SMTP from the se***@gmail.com
-account (the exact address is the GMAIL_EMAIL value in Vercel; read it there first). Its app
-password is being rejected (SMTP 535). Create a new app password and store it in Vercel.
+Goal: the Serasomatic CRM sends appointment emails through Gmail SMTP. The stored app
+password is rejected (SMTP 535). Create a new app password on the serasomatic@gmail.com
+account and store it in Vercel, and make that address the sender and the internal
+notification recipient.
 
 Steps:
-1. Open https://vercel.com → team "sethrocks-projects" → project "serasomatic" → Settings →
-   Environment Variables. Note the value of GMAIL_EMAIL (an email address, not a secret).
-2. Open https://myaccount.google.com in my browser and make sure the signed-in account is that
-   address (switch accounts if needed). Security → "2-Step Verification". If it is OFF, tell me and
-   stop (app passwords require it). If ON, continue.
-3. Go to https://myaccount.google.com/apppasswords. Create an app password named
-   "Serasomatic Vercel 2026-10". Google shows a 16-character code once. Do not paste it into chat.
-4. In the Vercel tab, edit GMAIL_APP_PASSWORD: replace the value for BOTH Production and
-   Development with the new code (no spaces). Mark Sensitive. Save.
-5. Still in Vercel, add NOTIFICATION_EMAIL (Production and Development) set to the same address
-   as GMAIL_EMAIL unless I have told you a different inbox. Save.
-6. Back on the Google app-passwords page: if an older Serasomatic/Replit app password exists,
-   leave it for now (we delete it after production is verified). List its name only.
+1. Open https://myaccount.google.com and make sure the signed-in account is
+   serasomatic@gmail.com (switch accounts if needed). Security → "2-Step Verification".
+   If it is OFF, tell me and stop (app passwords require it). If ON, continue.
+2. Go to https://myaccount.google.com/apppasswords. Create an app password named
+   "Serasomatic Vercel 2026-10". Google shows a 16-character code once; keep the tab open.
+   Do not paste the code into chat.
+3. Open https://vercel.com → team "sethrocks-projects" → project "serasomatic" →
+   Settings → Environment Variables.
+   - GMAIL_EMAIL: edit Production and Development, set both to serasomatic@gmail.com.
+   - GMAIL_APP_PASSWORD: edit Production (keep Sensitive) and Development (not sensitive);
+     paste the new code without spaces in both.
+   - NOTIFICATION_EMAIL: add if missing, Production and Development, value
+     serasomatic@gmail.com.
+   Save each.
+4. Back on the Google app-passwords page, list the NAMES of any other app passwords that
+   exist (older Replit/Serasomatic ones). Do not delete them yet; we remove them after
+   production email is verified.
 
-Report back: that 2-Step is on; the new app password's name; confirmation GMAIL_APP_PASSWORD was
-updated for Production and Development; the NOTIFICATION_EMAIL value you set; names of any
-older app passwords present.
+Report back: that 2-Step is on; the new app password's name; confirmation GMAIL_EMAIL,
+GMAIL_APP_PASSWORD and NOTIFICATION_EMAIL are set for Production and Development; names of
+any other app passwords.
 ```
 
-### D4 — Anthropic: create the API key and check the model
+### D4 — Anthropic: create a fresh API key, retire the leaked one, check the model
 
 ```
-Goal: provision an Anthropic API key for the Serasomatic CRM's "Conversation Create" feature
-and store it in Vercel.
+Goal: provision a new Anthropic API key for the Serasomatic CRM's "Conversation Create"
+feature, store it in Vercel, and retire an older key that was sitting in a plaintext
+export file.
 
 Steps:
-1. Open https://console.anthropic.com in my signed-in browser. Pick the workspace I normally use
-   (if there is a workspace called "Serasomatic" use it; otherwise the default workspace).
-2. Settings → Billing: confirm a payment method or credits exist. If none, tell me and stop.
-3. Settings → Limits (or workspace limits): set a monthly spend limit of $50 if the UI allows.
-4. API Keys → Create Key. Name: "serasomatic-vercel-prod". Copy it once; do not paste it in chat.
-5. Open https://vercel.com → team "sethrocks-projects" → project "serasomatic" → Settings →
-   Environment Variables → Add: Key ANTHROPIC_API_KEY, Value = the key, Environment: Production
-   and Development, Sensitive. Save.
-6. Back in the Anthropic console, open the Models / model deprecations page in Docs
-   (https://docs.anthropic.com → Models). Check whether the model id
-   "claude-sonnet-4-20250514" is still available or is listed as deprecated/retired, and note the
-   current recommended Sonnet model id.
+1. Open https://console.anthropic.com in my signed-in browser. Use the workspace I
+   normally use (a workspace named "Serasomatic" if it exists, else Default).
+2. Settings → Billing: confirm a payment method or credit balance exists. If none, tell me
+   and stop.
+3. Settings → Limits (or workspace spend limit): set a monthly limit of $50 if available.
+4. API Keys → Create Key, name "serasomatic-vercel-2026-10". Copy it once; do not paste
+   it into chat.
+5. Open https://vercel.com → team "sethrocks-projects" → project "serasomatic" →
+   Settings → Environment Variables → Add ANTHROPIC_API_KEY for Production (Sensitive)
+   and Development (not sensitive) with the new key. Save.
+6. Back in API Keys: list the names and creation dates of all other keys. If there is a
+   key created around June 2026 (the Replit-era key), DISABLE it only after I confirm the
+   new key works in production; for now just report it.
+7. Open https://docs.anthropic.com → Models → model deprecations. Report whether
+   "claude-sonnet-4-20250514" is still available or deprecated/retired, and the current
+   recommended Sonnet model id.
 
-Report back: workspace name; whether billing is active; the key name; confirmation
-ANTHROPIC_API_KEY exists for Production and Development; the status of claude-sonnet-4-20250514
-and the current recommended Sonnet model id.
+Report back: workspace; billing active; new key name; confirmation ANTHROPIC_API_KEY is
+set for both environments; names/dates of other keys; the status of
+claude-sonnet-4-20250514 and the recommended Sonnet id.
 ```
 
 ### D5 — Google Cloud: verify the Calendar OAuth setup (report-only)
@@ -449,78 +477,98 @@ vl4.apps.googleusercontent.com. The token has calendar scopes and was minted thr
 OAuth Playground.
 
 Steps:
-1. Open https://console.cloud.google.com in my browser. Use the project selector; the project
-   number is 790341112586. Open it.
-2. APIs & Services → OAuth consent screen (or "Google Auth Platform" → Branding/Audience).
-   Record: Publishing status (must be "In production", not "Testing"); User type
-   (Internal/External); whether a verification warning is shown.
-3. APIs & Services → Credentials. Find the OAuth 2.0 Client ID matching the id above. Record its
-   type (Web application) and whether https://developers.google.com/oauthplayground is among the
-   authorized redirect URIs.
-4. APIs & Services → Enabled APIs. Confirm "Google Calendar API" is enabled. Record whether
-   "Gmail API" is enabled (it is not needed; just report).
+1. Open https://console.cloud.google.com in my browser. Use the project selector; the
+   project number is 790341112586. Open it.
+2. APIs & Services → OAuth consent screen (or "Google Auth Platform" → Branding /
+   Audience). Record: Publishing status (must be "In production", not "Testing"); User
+   type (Internal/External); whether a verification warning is shown.
+3. APIs & Services → Credentials. Find the OAuth 2.0 Client ID matching the id above.
+   Record its type (Web application) and whether
+   https://developers.google.com/oauthplayground is among its authorized redirect URIs.
+4. APIs & Services → Enabled APIs. Confirm "Google Calendar API" is enabled. Record
+   whether "Gmail API" is enabled (not needed; just report).
 5. Do not create, edit, or delete anything.
 
-Report back: publishing status, user type, any warnings; whether the client exists with the
-playground redirect; whether Calendar API is enabled. If publishing status is "Testing", say so
-prominently: that means the token will expire 7 days after minting and we must publish the app
-and re-mint (prompt DC1).
+Report back: publishing status, user type, any warnings; whether the client exists with
+the playground redirect; whether Calendar API is enabled. If publishing status is
+"Testing", say so prominently: the token will expire 7 days after minting and we must
+publish the app and re-mint (prompt DC1).
 ```
 
-### D6 — Vercel: environment cleanup and settings check
+### D6 — Vercel: environment cleanup and settings check (after D3 and D4)
 
 ```
-Goal: tidy the Serasomatic Vercel project's environment variables after the new credentials are
-in place. Only do this AFTER I confirm D1–D4 are done.
+Goal: tidy the Serasomatic Vercel project's environment variables after the new
+credentials are in place.
 
 Steps:
-1. Open https://vercel.com → team "sethrocks-projects" → project "serasomatic" → Settings →
-   Environment Variables.
-2. Delete these keys in every environment where they exist (they are not read by the app):
+1. Open https://vercel.com → team "sethrocks-projects" → project "serasomatic" →
+   Settings → Environment Variables.
+2. Delete these keys in every environment where they exist (the app never reads them):
    PGHOST, PGPORT, PGUSER, PGPASSWORD, PGDATABASE, DD_API_KEY, DD_SERVICE, DD_ENV.
-3. ALLOW_REGISTRATION: set the value to false for Production and Development (create if missing).
-4. APP_BASE_URL: confirm Production value is https://serasomatic.vercel.app (no trailing slash).
-   If different, tell me; do not change it.
-5. Confirm these keys exist (do not reveal values): DATABASE_URL, SESSION_SECRET,
-   GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REFRESH_TOKEN, GOOGLE_CALENDAR_ID,
-   GOOGLE_ARCHIVE_CALENDAR_ID, GMAIL_EMAIL, GMAIL_APP_PASSWORD, NOTIFICATION_EMAIL,
-   ANTHROPIC_API_KEY, DEPOSIT_CONFIRM_SECRET, ALLOW_REGISTRATION, APP_BASE_URL.
+3. ALLOW_REGISTRATION: set the value to false for Production and Development (create if
+   missing).
+4. APP_BASE_URL: set Production and Development to https://serasomatic.vercel.app
+   (no trailing slash). Values are hidden as Sensitive, so just overwrite.
+5. Confirm these keys exist (values are hidden; presence only): DATABASE_URL,
+   SESSION_SECRET, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REFRESH_TOKEN,
+   GOOGLE_CALENDAR_ID, GOOGLE_ARCHIVE_CALENDAR_ID, GMAIL_EMAIL, GMAIL_APP_PASSWORD,
+   NOTIFICATION_EMAIL, ANTHROPIC_API_KEY, DEPOSIT_CONFIRM_SECRET, ALLOW_REGISTRATION,
+   APP_BASE_URL.
 6. Settings → Deployment Protection: record the current setting. Do not change it.
-7. Do NOT delete DATABASE_URL, DATABASE_URL_NEW, NEON_DIRECT_URL or REPLIT_DATABASE_URL; I remove
-   the temporary ones myself after cutover.
+7. Deployments → latest Production → Redeploy so the changes take effect.
 
-Report back: which keys were deleted and from which environments; ALLOW_REGISTRATION value;
-APP_BASE_URL value; the list from step 5 with present/missing; the deployment protection setting.
+Report back: which keys were deleted and from which environments; ALLOW_REGISTRATION and
+APP_BASE_URL as set; the step-5 list with present/missing; the deployment protection
+setting; the redeploy status.
+```
+
+### D7 — Datadog: revoke the unused API key (after D6)
+
+```
+Goal: the Serasomatic app never used Datadog, but a Datadog API key for service
+"appointment-scheduler" (env "production") was left in a plaintext export file. Revoke it.
+
+Steps:
+1. Open https://app.datadoghq.com (or the EU site if that is where my account lives) in
+   my signed-in browser. Organization Settings → API Keys.
+2. Find any key whose name mentions "appointment", "scheduler", "replit" or "serasomatic",
+   or that was created around mid-2026 and is unused (no recent "last used").
+3. Revoke/delete it. If several candidates exist and you are not sure, do not delete;
+   list them and stop.
+4. Do not touch Application Keys or other keys.
+
+Report back: the name(s) of keys found; which one you revoked; or the list if you stopped.
 ```
 
 ### DC1 — Contingency: re-mint the Google refresh token (only if calendar sync fails with `invalid_grant`)
 
 ```
-Goal: mint a new Google OAuth refresh token for the Serasomatic calendar sync using the OAuth
-Playground with our own OAuth client, and store it in Vercel. Only do this if I ask for DC1.
+Goal: mint a new Google OAuth refresh token for the Serasomatic calendar sync using the
+OAuth Playground with our own OAuth client, and store it in Vercel. Only do this if I ask
+for DC1.
 
 Steps:
-1. If D5 reported the consent screen as "Testing": in Google Cloud (project 790341112586) →
-   OAuth consent screen → "Publish app" → confirm. Then continue.
-2. Open https://vercel.com → project "serasomatic" → Settings → Environment Variables. You will
-   need GOOGLE_CLIENT_ID (not secret) and GOOGLE_CLIENT_SECRET (secret; reveal it only inside the
-   Vercel UI and type it into the Playground field, never into chat).
-3. Open https://developers.google.com/oauthplayground. Click the gear icon → check "Use your own
+1. If D5 reported the consent screen as "Testing": in Google Cloud (project 790341112586)
+   → OAuth consent screen → "Publish app" → confirm. Then continue.
+2. You need the OAuth client id (starts 790341112586-, ends vl4.apps.googleusercontent.com)
+   and its client secret. Get the secret from Google Cloud → APIs & Services → Credentials
+   → that client → "Client secret" (click to reveal). Never paste it into chat.
+3. Open https://developers.google.com/oauthplayground. Gear icon → check "Use your own
    OAuth credentials" → enter the client id and client secret.
-4. Step 1 in the Playground: in the scope box enter exactly
+4. Step 1: in the scope box enter exactly
      https://www.googleapis.com/auth/calendar https://www.googleapis.com/auth/calendar.events
    Click "Authorize APIs". Sign in with the Google account that owns the calendars
-   "Scheduled-Rescheduled" and "Complete-Cancel" (the same se***@gmail.com account). Accept.
-5. Step 2: click "Exchange authorization code for tokens". Copy the Refresh token value once.
-6. In Vercel, edit GOOGLE_REFRESH_TOKEN for Production and Development with the new value.
-   Mark Sensitive. Save.
+   "Scheduled-Rescheduled" and "Complete-Cancel". Accept.
+5. Step 2: "Exchange authorization code for tokens". Copy the Refresh token once.
+6. Open https://vercel.com → project "serasomatic" → Settings → Environment Variables →
+   edit GOOGLE_REFRESH_TOKEN for Production (Sensitive) and Development with the new value.
+   Save. Then Deployments → Redeploy latest Production.
 7. Do not change GOOGLE_CLIENT_ID or GOOGLE_CLIENT_SECRET.
 
-Report back: whether you had to publish the consent screen; the account you authorized with;
-confirmation GOOGLE_REFRESH_TOKEN was updated for both environments and the time you did it.
+Report back: whether you had to publish the consent screen; the account you authorized
+with; confirmation GOOGLE_REFRESH_TOKEN was updated for both environments and the time.
 ```
-
----
 
 ## 11. Open questions for the owner
 
