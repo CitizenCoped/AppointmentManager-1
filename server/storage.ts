@@ -696,7 +696,11 @@ export class DatabaseStorage implements IStorage {
       updatedAt: now,
     }).returning();
 
-    return result[0];
+    const created = result[0];
+    if (created?.clientId) {
+      await this.updateClientMetrics(created.clientId);
+    }
+    return created;
   }
   
   /**
@@ -727,19 +731,12 @@ export class DatabaseStorage implements IStorage {
       ? appointment.depositRefundedToClient 
       : (appointment.clientDeposit ?? 0);
 
-    // Update the appointment with proper financial calculations
-    const updated = await this.updateAppointment(id, {
+    // updateAppointment refreshes client metrics after the write
+    return this.updateAppointment(id, {
       depositReturned: true,
       depositRefundedToClient: depositRefundedToClient,
       dispositionStatus: 'Cancel' // Ensure it's marked as cancelled
     });
-
-    // Update client metrics to reflect the financial changes
-    if (appointment.clientId) {
-      await this.updateClientMetrics(appointment.clientId);
-    }
-
-    return updated;
   }
   
   async updateAppointment(id: number, updateData: Partial<InsertAppointment>): Promise<Appointment | undefined> {
@@ -788,13 +785,30 @@ export class DatabaseStorage implements IStorage {
       })
       .where(eq(appointments.id, id))
       .returning();
+
+    const updated = result[0];
+    if (updated) {
+      const previousClientId = currentAppointment.clientId;
+      const nextClientId = updated.clientId;
+      if (previousClientId) {
+        await this.updateClientMetrics(previousClientId);
+      }
+      if (nextClientId && nextClientId !== previousClientId) {
+        await this.updateClientMetrics(nextClientId);
+      }
+    }
     
-    return result[0];
+    return updated;
   }
   
   async deleteAppointment(id: number): Promise<boolean> {
+    const existing = await this.getAppointment(id);
     const result = await db.delete(appointments).where(eq(appointments.id, id)).returning();
-    return result.length > 0;
+    const deleted = result.length > 0;
+    if (deleted && existing?.clientId) {
+      await this.updateClientMetrics(existing.clientId);
+    }
+    return deleted;
   }
   
   // Client methods
@@ -901,21 +915,24 @@ export class DatabaseStorage implements IStorage {
   async updateClientMetrics(clientId: number): Promise<void> {
     const clientAppointments = await this.getClientAppointments(clientId);
     
-    // Calculate total revenue and appointment count
+    // Lifetime GCC = sum of each appointment's gross cash contribution (all statuses)
     let lifetimeGrossCashCollections = 0;
     let appointmentCount = 0;
     let lastAppointmentDate: Date | null = null;
     
     for (const appointment of clientAppointments) {
-      if (appointment.dispositionStatus === 'Complete') {
-        const f = computeAppointmentFinancials(appointment);
-        lifetimeGrossCashCollections += f.completedEngagementCollections;
-      }
+      const f = computeAppointmentFinancials(appointment);
+      lifetimeGrossCashCollections += f.grossCashCollectionsContribution;
       appointmentCount++;
-      
-      if (appointment.createdAt) {
-        if (!lastAppointmentDate || appointment.createdAt > lastAppointmentDate) {
-          lastAppointmentDate = appointment.createdAt;
+
+      // Prefer rescheduled schedule date when present
+      const scheduleDateStr = appointment.updatedStartDate || appointment.startDate;
+      if (scheduleDateStr) {
+        const scheduleDate = new Date(scheduleDateStr);
+        if (!Number.isNaN(scheduleDate.getTime())) {
+          if (!lastAppointmentDate || scheduleDate > lastAppointmentDate) {
+            lastAppointmentDate = scheduleDate;
+          }
         }
       }
     }

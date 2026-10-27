@@ -67,12 +67,11 @@ function RescheduleForm({
   // Update mutation
   const updateMutation = useMutation({
     mutationFn: async (data: Partial<InsertAppointment>) => {
-      const response = await apiRequest(
+      return apiRequest(
         "PATCH",
         `/api/appointments/${appointmentId}`,
         data
       );
-      return response.json();
     },
     onSuccess: () => {
       toast({
@@ -81,6 +80,11 @@ function RescheduleForm({
       });
       queryClient.invalidateQueries({ queryKey: ['/api/appointments'] });
       queryClient.invalidateQueries({ queryKey: [`/api/appointments/${appointmentId}`] });
+      if (appointment.clientId) {
+        queryClient.invalidateQueries({ queryKey: ['/api/clients'] });
+        queryClient.invalidateQueries({ queryKey: [`/api/clients/${appointment.clientId}/appointments`] });
+        queryClient.invalidateQueries({ queryKey: [`/api/clients/${appointment.clientId}/analytics`] });
+      }
       onSuccess();
       onClose();
     },
@@ -211,12 +215,11 @@ function CompleteForm({
   // Update mutation
   const updateMutation = useMutation({
     mutationFn: async (data: Partial<InsertAppointment>) => {
-      const response = await apiRequest(
+      return apiRequest(
         "PATCH",
         `/api/appointments/${appointmentId}`,
         data
       );
-      return response.json();
     },
     onSuccess: () => {
       toast({
@@ -225,6 +228,11 @@ function CompleteForm({
       });
       queryClient.invalidateQueries({ queryKey: ['/api/appointments'] });
       queryClient.invalidateQueries({ queryKey: [`/api/appointments/${appointmentId}`] });
+      if (appointment.clientId) {
+        queryClient.invalidateQueries({ queryKey: ['/api/clients'] });
+        queryClient.invalidateQueries({ queryKey: [`/api/clients/${appointment.clientId}/appointments`] });
+        queryClient.invalidateQueries({ queryKey: [`/api/clients/${appointment.clientId}/analytics`] });
+      }
       onSuccess();
       onClose();
     },
@@ -427,12 +435,11 @@ function CancelForm({
   // Update mutation
   const updateMutation = useMutation({
     mutationFn: async (data: Partial<InsertAppointment>) => {
-      const response = await apiRequest(
+      return apiRequest(
         "PATCH",
         `/api/appointments/${appointmentId}`,
         data
       );
-      return response.json();
     },
     onSuccess: () => {
       toast({
@@ -441,6 +448,11 @@ function CancelForm({
       });
       queryClient.invalidateQueries({ queryKey: ['/api/appointments'] });
       queryClient.invalidateQueries({ queryKey: [`/api/appointments/${appointmentId}`] });
+      if (appointment.clientId) {
+        queryClient.invalidateQueries({ queryKey: ['/api/clients'] });
+        queryClient.invalidateQueries({ queryKey: [`/api/clients/${appointment.clientId}/appointments`] });
+        queryClient.invalidateQueries({ queryKey: [`/api/clients/${appointment.clientId}/analytics`] });
+      }
       onSuccess();
       onClose();
     },
