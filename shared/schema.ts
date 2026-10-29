@@ -1,4 +1,5 @@
-import { pgTable, text, serial, integer, boolean, timestamp, doublePrecision, json } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, integer, boolean, timestamp, doublePrecision, json, index } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -243,6 +244,28 @@ export const appointments = pgTable("appointments", {
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
+
+// Legacy audit table written by the database trigger `cash_collection_trigger`
+// (`log_cash_collection()`) whenever appointments.total_collected_cash is set.
+// The app never reads it, but the trigger needs it to exist or every appointment
+// update fails. Declaring it here keeps `drizzle-kit push` from dropping it as an
+// unknown table. Kept in sync with server/ensureCashCollectionLog.ts.
+export const cashCollectionLog = pgTable("cash_collection_log", {
+  id: serial("id").primaryKey(),
+  appointmentId: integer("appointment_id")
+    .notNull()
+    .references(() => appointments.id, { onDelete: "cascade" }),
+  oldAmount: doublePrecision("old_amount"),
+  newAmount: doublePrecision("new_amount"),
+  difference: doublePrecision("difference"),
+  processed: boolean("processed").notNull().default(false),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  index("cash_collection_log_appointment_id_idx").on(table.appointmentId),
+  index("cash_collection_log_processed_idx")
+    .on(table.processed)
+    .where(sql`${table.processed} = false`),
+]);
 
 // Create validation schema for new appointment
 export const insertAppointmentSchema = createInsertSchema(appointments).omit({

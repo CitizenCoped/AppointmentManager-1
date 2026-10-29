@@ -11,6 +11,7 @@
     "check:creds": "tsx --env-file=.env server/scripts/checkCreds.ts",
     "db:push": "drizzle-kit push",
     "db:backfill-financials": "tsx --env-file=.env server/scripts/backfillAppointmentFinancials.ts",
+    "db:ensure-cash-log": "tsx --env-file=.env server/scripts/ensureCashCollectionLog.ts",
     "db:import-replit-export": "tsx --env-file=.env server/scripts/importReplitExport.ts",
     "db:migrate-clients": "tsx --env-file=.env server/scripts/migrateClients.ts",
     "db:link-clients": "tsx --env-file=.env server/scripts/linkAppointmentsToClients.ts",

@@ -6,6 +6,11 @@
 --
 -- Safe to re-run. Applied to Neon project seramangement / production
 -- (square-rice-65609182 / br-delicate-band-a4fh1coi) on 2026-10-27.
+--
+-- Paste into the Neon SQL editor for the database Vercel's DATABASE_URL points
+-- at. The app also runs this automatically on every cold start
+-- (server/ensureCashCollectionLog.ts), and `npm run db:ensure-cash-log` runs it
+-- from a shell. Keep the three copies identical.
 
 CREATE TABLE IF NOT EXISTS public.cash_collection_log (
   id SERIAL PRIMARY KEY,

@@ -6,6 +6,7 @@ import { log } from "./logger";
 import { serveStatic } from "./static";
 import { storage, DatabaseStorage } from "./storage";
 import { db } from "./db";
+import { ensureCashCollectionLog } from "./ensureCashCollectionLog";
 
 const app = express();
 app.use(
@@ -110,6 +111,17 @@ async function bootstrap() {
     }
   } catch (error) {
     log(`Error initializing database: ${(error as Error).message}`);
+    console.error(error);
+  }
+
+  // The appointments table carries a legacy trigger that writes to
+  // cash_collection_log. If that table is missing (restore, drizzle push),
+  // every appointment update fails, so recreate it on each cold start.
+  try {
+    log("Ensuring cash_collection_log table exists...");
+    await ensureCashCollectionLog((statement) => db.execute(statement));
+  } catch (error) {
+    log(`Error ensuring cash_collection_log: ${(error as Error).message}`);
     console.error(error);
   }
 }
